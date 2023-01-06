@@ -1,7 +1,7 @@
 use num_traits::pow::Pow;
 use std::{fmt::Display, str::FromStr};
 
-use num_bigint_dig::{BigInt, ToBigInt};
+use num_bigint_dig::{BigInt, ModInverse, ToBigInt};
 use num_traits::One;
 
 #[non_exhaustive]
@@ -18,11 +18,24 @@ impl Display for FiniteField {
 }
 
 impl FiniteField {
-    pub fn new(num: BigInt, prime: BigInt) -> Self {
-        if num >= prime || num < 1.to_bigint().unwrap() || prime <= 2.to_bigint().unwrap() {
-            panic!("[FiniteField] prime ({prime}) must bigger than num ({num})");
+    pub fn raw_new(num: BigInt, prime: BigInt) -> Self {
+        if prime <= 2.to_bigint().unwrap() {
+            // panic!("[FiniteField] prime ({prime}) must bigger than num ({num})");
+            panic!("[FiniteField] Wrong prime");
         }
-        FiniteField { num, prime }
+        if num >= prime {
+            let num = num.modpow(&BigInt::one(), &prime);
+            FiniteField { num, prime }
+        } else {
+            FiniteField { num, prime }
+        }
+    }
+
+    pub fn new(num: BigInt, prime: BigInt) -> Self {
+        if num < 1.to_bigint().unwrap() {
+            panic!("[FiniteField] num ({num}) must be Natural number")
+        }
+        FiniteField::raw_new(num, prime)
     }
 
     pub fn new_from_i64(num: i64, prime: i64) -> Self {
@@ -38,323 +51,51 @@ impl FiniteField {
     }
 }
 
-macro_rules! _overloading_block {
-    ($ops:ident, $fn_name:ident, $r_type:ty, $l_type:ty, $res_type:ty, $l_var:ident, $r_var:ident, $blck:block) => {
-        impl std::ops::$ops<$r_type> for $l_type {
-            type Output = $res_type;
-
-            fn $fn_name(self, $r_var: $r_type) -> Self::Output {
-                let $l_var = self;
-
-                if $l_var.prime != $r_var.prime {
-                    panic!(
-                        "[FiniteField] lhs's prime {} != rhs's prime {}",
-                        $l_var.prime, $r_var.prime
-                    );
-                }
-                $blck
-            }
-        }
-    };
-}
-
-macro_rules! _overloading_core {
-    (+, $($t:tt)+) => {
-        _overloading_block!(Add, add, $($t)+);
-    };
-    (-, $($t:tt)+) => {
-        _overloading_block!(Sub, sub, $($t)+);
-    };
-    (*, $($t:tt)+) => {
-        _overloading_block!(Mul, mul, $($t)+);
-    };
-    (/, $($t:tt)+) => {
-        _overloading_block!(Div, div, $($t)+);
-    };
-}
-
-macro_rules! overloading {
-    (($l_var:ident : $l_type:ty) $ops:tt ($r_var:ident : $r_type:ty) => $res_type:ty as $blck:block) => {
-        _overloading_core!($ops, $r_type, $l_type, $res_type, $l_var, $r_var, $blck);
-        _overloading_core!($ops, $r_type, &$l_type, $res_type, $l_var, $r_var, $blck);
-        _overloading_core!($ops, &$r_type, $l_type, $res_type, $l_var, $r_var, $blck);
-        _overloading_core!($ops, &$r_type, &$l_type, $res_type, $l_var, $r_var, $blck);
-    };
-}
-
 overloading!((lhs : FiniteField) + (rhs : FiniteField) => FiniteField as {
-    FiniteField::new(
+    _lhs_rhs_prime_eq_check!(lhs, rhs);
+    FiniteField::raw_new(
         BigInt::modpow(&(&lhs.num + &rhs.num), &BigInt::one(), &lhs.prime),
-        lhs.prime.clone())
+        lhs.prime.clone()
+    )
 });
 overloading!((lhs : FiniteField) - (rhs : FiniteField) => FiniteField as {
-    FiniteField::new(
+    _lhs_rhs_prime_eq_check!(lhs, rhs);
+    FiniteField::raw_new(
         BigInt::modpow(&(&lhs.num - &rhs.num), &BigInt::one(), &lhs.prime),
         lhs.prime.clone(),
     )
 });
 overloading!((lhs : FiniteField) * (rhs : FiniteField) => FiniteField as {
-    FiniteField::new(
+    _lhs_rhs_prime_eq_check!(lhs, rhs);
+    FiniteField::raw_new(
         BigInt::modpow(&(&lhs.num * &rhs.num), &BigInt::one(), &lhs.prime),
         lhs.prime.clone(),
     )
 });
 overloading!((lhs : FiniteField) / (rhs : FiniteField) => FiniteField as {
-    FiniteField::new(
-        BigInt::modpow(&(&lhs.num / &rhs.num), &BigInt::one(), &lhs.prime),
+    _lhs_rhs_prime_eq_check!(lhs, rhs);
+    FiniteField::raw_new(
+        BigInt::modpow(&(&lhs.num * &(&rhs.num).mod_inverse(&lhs.prime).unwrap()), &BigInt::one(), &lhs.prime),
         lhs.prime.clone(),
     )
 });
 
-// impl ops::Add<FiniteField> for FiniteField {
-//     type Output = FiniteField;
-
-//     fn add(self, rhs: FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let sum = &self.num + &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&sum, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl ops::Add<&FiniteField> for FiniteField {
-//     type Output = FiniteField;
-
-//     fn add(self, rhs: &FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let sum = &self.num + &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&sum, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl<'a, 'b> ops::Add<&'a FiniteField> for &'b FiniteField {
-//     type Output = FiniteField;
-
-//     fn add(self, rhs: &FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let sum = &self.num + &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&sum, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl ops::Sub<FiniteField> for FiniteField {
-//     type Output = FiniteField;
-
-//     fn sub(self, rhs: FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let sub = &self.num - &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&sub, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl ops::Sub<&FiniteField> for FiniteField {
-//     type Output = FiniteField;
-
-//     fn sub(self, rhs: &FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let sub = &self.num - &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&sub, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl<'a, 'b> ops::Sub<&'a FiniteField> for &'b FiniteField {
-//     type Output = FiniteField;
-
-//     fn sub(self, rhs: &FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let sub = &self.num - &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&sub, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl ops::Mul<FiniteField> for FiniteField {
-//     type Output = FiniteField;
-
-//     fn mul(self, rhs: FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let mul = &self.num * &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&mul, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl<'a, 'b> ops::Mul<&'a FiniteField> for &'b FiniteField {
-//     type Output = FiniteField;
-
-//     fn mul(self, rhs: &FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let mul = &self.num * &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&mul, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl ops::Mul<BigInt> for FiniteField {
-//     type Output = FiniteField;
-
-//     fn mul(self, rhs: BigInt) -> Self::Output {
-//         let tmp = FiniteField::new(rhs, self.prime.clone());
-//         tmp * self
-//     }
-// }
-
-// impl ops::Mul<BigInt> for &FiniteField {
-//     type Output = FiniteField;
-
-//     fn mul(self, rhs: BigInt) -> Self::Output {
-//         let tmp = FiniteField::new(rhs, self.prime.clone());
-//         &tmp * self
-//     }
-// }
-
-// impl ops::Mul<&BigInt> for &FiniteField {
-//     type Output = FiniteField;
-
-//     fn mul(self, rhs: &BigInt) -> Self::Output {
-//         let tmp = FiniteField::new(rhs.clone(), self.prime.clone());
-//         &tmp * self
-//     }
-// }
-
-// impl ops::Div<FiniteField> for FiniteField {
-//     type Output = FiniteField;
-
-//     fn div(self, rhs: FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let res = &self.num / &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&res, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-// impl<'a, 'b> ops::Div<&'a FiniteField> for &'b FiniteField {
-//     type Output = FiniteField;
-
-//     fn div(self, rhs: &'a FiniteField) -> Self::Output {
-//         if self.prime != rhs.prime {
-//             panic!(
-//                 "[FiniteField] lhs's prime {} != rhs's prime {}",
-//                 self.prime, rhs.prime
-//             );
-//         }
-
-//         let res = &self.num / &rhs.num;
-
-//         FiniteField::new(
-//             BigInt::modpow(&res, &BigInt::one(), &self.prime),
-//             self.prime.clone(),
-//         )
-//     }
-// }
-
-impl<'a, 'b> Pow<&'a FiniteField> for &'b FiniteField {
-    type Output = FiniteField;
-
-    fn pow(self, rhs: &'a FiniteField) -> Self::Output {
-        if self.prime != rhs.prime {
-            panic!(
-                "[FiniteField] lhs's prime {} != rhs's prime {}",
-                self.prime, rhs.prime
-            );
-        }
-
-        let pow = BigInt::modpow(&self.num, &rhs.num, &self.prime);
-
-        FiniteField::new(pow, self.prime.clone())
-    }
-}
+overloading!((Pow) (lhs : FiniteField) (pow) (rhs : FiniteField) => FiniteField as {
+    _lhs_rhs_prime_eq_check!(lhs, rhs);
+    FiniteField::raw_new(
+        BigInt::modpow(&lhs.num, &rhs.num, &lhs.prime),
+        lhs.prime.clone(),
+    )
+});
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use num_bigint::ToBigInt;
 
-    use num_traits::Pow;
+    use num_bigint_dig::{BigInt, ModInverse};
+    use num_traits::{One, Pow};
 
     use super::FiniteField;
 
@@ -369,9 +110,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn finite_field_new2() {
-        let _q = FiniteField::new(13.to_bigint().unwrap(), 7.to_bigint().unwrap());
+        let q = FiniteField::new(13.to_bigint().unwrap(), 7.to_bigint().unwrap());
+        let res = FiniteField::new(6.to_bigint().unwrap(), 7.to_bigint().unwrap());
+
+        assert_eq!(q, res);
     }
 
     #[test]
@@ -416,6 +159,23 @@ mod tests {
             "246240741295316874202930043963",
         );
         assert_eq!(f.pow(&g), h);
+    }
+
+    #[test]
+    fn multiplicative_inverse_test1() {
+        let a1 = FiniteField::new(
+            BigInt::from_str("13").unwrap(),
+            BigInt::from_str("11").unwrap(),
+        );
+        let a2 = FiniteField::new(
+            BigInt::from_str("14").unwrap(),
+            BigInt::from_str("11").unwrap(),
+        );
+        let res = FiniteField::new(
+            BigInt::from_str("8").unwrap(),
+            BigInt::from_str("11").unwrap(),
+        );
+        assert_eq!(a1 / a2, res);
     }
 
     // #[test]
