@@ -1,3 +1,5 @@
+pub mod key;
+pub mod signature;
 #[macro_use]
 pub mod macros;
 pub mod ecc;

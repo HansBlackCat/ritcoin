@@ -1,42 +1,56 @@
+use std::result;
+
+use anyhow::bail;
 use lazy_static::lazy_static;
-use num_bigint_dig::{BigInt, BigUint, ToBigInt, ToBigUint};
+use num_bigint_dig::{BigInt, BigUint, ModInverse, ToBigInt, ToBigUint};
 use num_traits::{Num, One, Pow, Zero};
 
 use crate::libs::finite_field::FiniteField;
 
-pub enum Generators {
-    Secp256k1Gens(BigUint, BigUint),
-    Secp256k1GroupOrder(BigUint),
-}
+use super::signature::Signature;
 
 lazy_static! {
-    static ref SECP256K1GENS: Generators = Generators::Secp256k1Gens(
-        BigUint::from_str_radix(
-            "79BE667E F9DCBBAC 55A06295 CE870B07 029BFCDB 2DCE28D9 59F2815B 16F81798",
-            16u32
-        )
-        .unwrap(),
-        BigUint::from_str_radix(
-            "483ADA77 26A3C465 5DA4FBFC 0E1108A8 FD17B448 A6855419 9C47D08F FB10D4B8",
-            16u32
-        )
-        .unwrap()
+    pub static ref SECP256K1GENS_X: BigUint = BigUint::from_str_radix(
+        "79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798",
+        16u32
+    )
+    .unwrap();
+    pub static ref SECP256K1GENS_Y: BigUint = BigUint::from_str_radix(
+        "483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8",
+        16u32
+    )
+    .unwrap();
+    pub static ref SECP256K1GENS: EccPoint = EccPoint::new_secp256k1(
+        (*SECP256K1GENS_X).to_bigint().unwrap().clone(),
+        (*SECP256K1GENS_Y).to_bigint().unwrap().clone()
     );
+    pub static ref SECP256K1GENS_ORDER: BigUint = BigUint::from_str_radix(
+        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
+        16u32
+    )
+    .unwrap();
 }
 
 // secp256k1
 // y^2 == x^3 + 5x + 7
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Ecc {
-    a: BigInt,
-    b: BigInt,
-    x: FiniteField,
-    y: FiniteField,
+pub struct Ecc {
+    pub a: BigInt,
+    pub b: BigInt,
+    pub x: FiniteField,
+    pub y: FiniteField,
+    order: Option<BigUint>,
 }
 
 impl Ecc {
-    fn new(a: BigInt, b: BigInt, x: FiniteField, y: FiniteField) -> Self {
+    fn raw_new(
+        a: BigInt,
+        b: BigInt,
+        x: FiniteField,
+        y: FiniteField,
+        order: Option<BigUint>,
+    ) -> Self {
         if &x.prime != &y.prime {
             panic!("All FiniteField should have same prime element");
         }
@@ -57,18 +71,23 @@ impl Ecc {
             );
         }
 
-        Ecc { a, b, x, y }
+        Ecc { a, b, x, y, order }
+    }
+
+    fn new(a: BigInt, b: BigInt, x: FiniteField, y: FiniteField) -> Self {
+        Ecc::raw_new(a, b, x, y, None)
     }
 
     fn new_secp256k1(x: BigInt, y: BigInt) -> Self {
         let prime = 2.to_bigint().unwrap().pow(256u64)
             - 2.to_bigint().unwrap().pow(32u64)
             - 977.to_bigint().unwrap();
-        Ecc::new(
+        Ecc::raw_new(
             BigInt::zero(),
             7.to_bigint().unwrap(),
             FiniteField::new(x, prime.clone()),
             FiniteField::new(y, prime.clone()),
+            Some((*SECP256K1GENS_ORDER).clone()),
         )
     }
 
@@ -81,7 +100,7 @@ impl Ecc {
 
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum EccPoint {
+pub enum EccPoint {
     Point(Box<Ecc>),
     PointAtInfinity,
 }
@@ -105,6 +124,48 @@ impl EccPoint {
             )))),
             EccPoint::PointAtInfinity => None,
         }
+    }
+
+    fn verify() {
+        todo!()
+    }
+
+    pub fn verify_secp256k1(&self, z: &BigUint, sig: &Signature) -> anyhow::Result<()> {
+        let s_inv = &sig
+            .s
+            .clone()
+            .mod_inverse((*SECP256K1GENS_ORDER).clone())
+            .unwrap()
+            .to_biguint()
+            .unwrap();
+        let u = BigUint::modpow(
+            &(z * s_inv),
+            &BigUint::one(),
+            &(*SECP256K1GENS_ORDER).clone(),
+        );
+        let v = BigUint::modpow(
+            &(&sig.r * s_inv),
+            &BigUint::one(),
+            &(*SECP256K1GENS_ORDER).clone(),
+        );
+        // let point = EccPoint::new_secp256k1(px, py);
+        let gen_point = EccPoint::new_secp256k1(
+            (*SECP256K1GENS_X).to_bigint().unwrap().clone(),
+            (*SECP256K1GENS_Y).to_bigint().unwrap().clone(),
+        );
+        let res = u * gen_point + v * self;
+
+        if let EccPoint::Point(point) = res {
+            if point.x.num
+                == sig
+                    .r
+                    .to_bigint()
+                    .unwrap_or_else(|| panic!("Signature.r is negative number"))
+            {
+                return Ok(());
+            }
+        }
+        bail!("secp256k1 verification failed")
     }
 }
 
@@ -146,7 +207,6 @@ overloading!((lhs : EccPoint) + (rhs : EccPoint) => EccPoint as {
                     let new_y = s * (lx - &new_x) - ly.clone();
                     EccPoint::Point(Box::new(Ecc::new(l.a.clone(), l.b.clone(), new_x, new_y)))
                 }
-                _ => panic!("[EccPoint::add] unhandled match"),
             }
         }
     }
@@ -161,13 +221,21 @@ overloading!(^(lhs : BigUint) * (rhs : EccPoint) => EccPoint as {
             r.clone()
         }
         (l, r) => {
-            let mut coef = l.clone();
+            let mut coef;
+            if let EccPoint::Point(ecc) = r.clone() {
+                if let Some(order) = &ecc.order {
+                    coef = l.clone() % order;
+                } else {
+                    coef = l.clone();
+                }
+            } else {
+                coef = l.clone();
+            }
             let mut current = r.clone();
             let mut res = EccPoint::PointAtInfinity;
             loop {
                 match &coef {
                     c if c > &BigUint::zero() => {
-                        eprintln!("c = {}", &c);
                         if (c & BigUint::one()) > BigUint::zero() {
                             res = res + current.clone();
                         }
@@ -184,11 +252,12 @@ overloading!(^(lhs : BigUint) * (rhs : EccPoint) => EccPoint as {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint_dig::{BigInt, BigUint, ToBigInt, ToBigUint};
+    use num_bigint_dig::{BigInt, BigUint, ModInverse, ToBigInt, ToBigUint};
+    use num_traits::{Num, One};
 
-    use crate::libs::finite_field::FiniteField;
+    use crate::libs::{finite_field::FiniteField, signature::Signature};
 
-    use super::{Ecc, EccPoint};
+    use super::{Ecc, EccPoint, SECP256K1GENS_ORDER, SECP256K1GENS_X, SECP256K1GENS_Y};
 
     #[test]
     fn secp256k1_test1() {
@@ -350,5 +419,112 @@ mod tests {
             .unwrap();
         let lhs = a + a2;
         assert_eq!(lhs, res);
+    }
+
+    #[test]
+    fn secp256k1_generator1() {
+        EccPoint::new_secp256k1(
+            (*SECP256K1GENS_X).to_bigint().unwrap(),
+            (*SECP256K1GENS_Y).to_bigint().unwrap(),
+        );
+    }
+
+    #[test]
+    fn secp256k1_generator_order_test1() {
+        let gen = EccPoint::new_secp256k1(
+            (*SECP256K1GENS_X).to_bigint().unwrap(),
+            (*SECP256K1GENS_Y).to_bigint().unwrap(),
+        );
+        assert_eq!(
+            (*SECP256K1GENS_ORDER).clone() * &gen,
+            EccPoint::PointAtInfinity
+        );
+    }
+
+    #[test]
+    fn secp256k1_raw_signature_validate_test1() {
+        let z = BigUint::from_str_radix(
+            "bc62d4b80d9e36da29c16c5d4d9f11731f36052c72401a76c23c0fb5a9b74423",
+            16u32,
+        )
+        .unwrap();
+        let r = BigUint::from_str_radix(
+            "37206a0610995c58074999cb9767b87af4c4978db68c06e8e6e81d282047a7c6",
+            16u32,
+        )
+        .unwrap();
+        let s = BigUint::from_str_radix(
+            "8ca63759c1157ebeaec0d03cecca119fc9a75bf8e6d0fa65c841c8e2738cdaec",
+            16u32,
+        )
+        .unwrap();
+        let px = BigInt::from_str_radix(
+            "04519fac3d910ca7e7138f7013706f619fa8f033e6ec6e09370ea38cee6a7574",
+            16u32,
+        )
+        .unwrap();
+        let py = BigInt::from_str_radix(
+            "82b51eab8c27c66e26c858a079bcdf4f1ada34cec420cafc7eac1a42216fb6c4",
+            16u32,
+        )
+        .unwrap();
+
+        let s_inv = &s
+            .mod_inverse((*SECP256K1GENS_ORDER).clone())
+            .unwrap()
+            .to_biguint()
+            .unwrap();
+        let u = BigUint::modpow(
+            &(&z * s_inv),
+            &BigUint::one(),
+            &(*SECP256K1GENS_ORDER).clone(),
+        );
+        let v = BigUint::modpow(
+            &(&r * s_inv),
+            &BigUint::one(),
+            &(*SECP256K1GENS_ORDER).clone(),
+        );
+        let point = EccPoint::new_secp256k1(px, py);
+        let gen_point = EccPoint::new_secp256k1(
+            (*SECP256K1GENS_X).to_bigint().unwrap().clone(),
+            (*SECP256K1GENS_Y).to_bigint().unwrap().clone(),
+        );
+        if let EccPoint::Point(lhs) = (u * gen_point + v * point) {
+            assert_eq!(lhs.x.num, r.to_bigint().unwrap());
+        } else {
+            panic!("POA");
+        }
+    }
+
+    #[test]
+    fn secp256k1_signature_validate_test1() {
+        let z = BigUint::from_str_radix(
+            "bc62d4b80d9e36da29c16c5d4d9f11731f36052c72401a76c23c0fb5a9b74423",
+            16u32,
+        )
+        .unwrap();
+        let r = BigUint::from_str_radix(
+            "37206a0610995c58074999cb9767b87af4c4978db68c06e8e6e81d282047a7c6",
+            16u32,
+        )
+        .unwrap();
+        let s = BigUint::from_str_radix(
+            "8ca63759c1157ebeaec0d03cecca119fc9a75bf8e6d0fa65c841c8e2738cdaec",
+            16u32,
+        )
+        .unwrap();
+        let px = BigInt::from_str_radix(
+            "04519fac3d910ca7e7138f7013706f619fa8f033e6ec6e09370ea38cee6a7574",
+            16u32,
+        )
+        .unwrap();
+        let py = BigInt::from_str_radix(
+            "82b51eab8c27c66e26c858a079bcdf4f1ada34cec420cafc7eac1a42216fb6c4",
+            16u32,
+        )
+        .unwrap();
+        let sig = Signature::new(r, s);
+        let point = EccPoint::new_secp256k1(px, py);
+        point.verify_secp256k1(&z, &sig).unwrap();
     }
 }
