@@ -1,8 +1,7 @@
-use std::result;
-
 use anyhow::bail;
 use lazy_static::lazy_static;
 use num_bigint_dig::{BigInt, BigUint, ModInverse, ToBigInt, ToBigUint};
+use num_integer::Integer;
 use num_traits::{Num, One, Pow, Zero};
 
 use crate::libs::finite_field::FiniteField;
@@ -51,7 +50,7 @@ impl Ecc {
         y: FiniteField,
         order: Option<BigUint>,
     ) -> Self {
-        if &x.prime != &y.prime {
+        if x.prime != y.prime {
             panic!("All FiniteField should have same prime element");
         }
 
@@ -89,12 +88,6 @@ impl Ecc {
             FiniteField::new(y, prime.clone()),
             Some((*SECP256K1GENS_ORDER).clone()),
         )
-    }
-
-    fn check_factor(lhs: &Ecc, rhs: &Ecc) {
-        if lhs.a != rhs.a && lhs.b != rhs.b {
-            panic!("[Ecc::check_factor] differenct factor")
-        }
     }
 }
 
@@ -166,6 +159,35 @@ impl EccPoint {
             }
         }
         bail!("secp256k1 verification failed")
+    }
+
+    pub fn serialize_sec(&self) -> Vec<u8> {
+        if let EccPoint::Point(point) = self {
+            let mut prepend: Vec<u8> = vec![4];
+            let x = point.x.num.to_bytes_be().1;
+            let y = point.y.num.to_bytes_be().1;
+            prepend.extend(x);
+            prepend.extend(y);
+            prepend
+        } else {
+            vec![0, 0]
+        }
+    }
+
+    pub fn serialize_sec_compressed(&self) -> Vec<u8> {
+        if let EccPoint::Point(point) = self {
+            let mut prepend: Vec<u8>;
+            if point.y.num.is_odd() {
+                prepend = vec![3];
+            } else {
+                prepend = vec![2];
+            }
+            let x = point.x.num.to_bytes_be().1;
+            prepend.extend(x);
+            prepend
+        } else {
+            vec![0, 0]
+        }
     }
 }
 
@@ -250,12 +272,52 @@ overloading!(^(lhs : BigUint) * (rhs : EccPoint) => EccPoint as {
     }
 });
 
+overloading!((lhs : BigUint) * ^(rhs : EccPoint) => EccPoint as {
+    match (lhs, rhs) {
+        (l, _) if l == &BigUint::zero() => {
+            panic!("Cannot multiple zero or minus value to EccPoint")
+        }
+        (l, r) if l == &BigUint::one() => {
+            r.clone()
+        }
+        (l, r) => {
+            let mut coef;
+            if let EccPoint::Point(ecc) = r.clone() {
+                if let Some(order) = &ecc.order {
+                    coef = l.clone() % order;
+                } else {
+                    coef = l.clone();
+                }
+            } else {
+                coef = l.clone();
+            }
+            let mut current = r.clone();
+            let mut res = EccPoint::PointAtInfinity;
+            loop {
+                match &coef {
+                    c if c > &BigUint::zero() => {
+                        if (c & BigUint::one()) > BigUint::zero() {
+                            res = res + current.clone();
+                        }
+                        current = &current + &current;
+                        coef >>= 1;
+                    }
+                    _ => { break; }
+                }
+            }
+            res
+        }
+    }
+});
+
 #[cfg(test)]
 mod tests {
+    use std::fmt::format;
+
     use num_bigint_dig::{BigInt, BigUint, ModInverse, ToBigInt, ToBigUint};
     use num_traits::{Num, One};
 
-    use crate::libs::{finite_field::FiniteField, signature::Signature};
+    use crate::libs::{finite_field::FiniteField, key::Key, signature::Signature};
 
     use super::{Ecc, EccPoint, SECP256K1GENS_ORDER, SECP256K1GENS_X, SECP256K1GENS_Y};
 
@@ -474,22 +536,14 @@ mod tests {
             .unwrap()
             .to_biguint()
             .unwrap();
-        let u = BigUint::modpow(
-            &(&z * s_inv),
-            &BigUint::one(),
-            &(*SECP256K1GENS_ORDER).clone(),
-        );
-        let v = BigUint::modpow(
-            &(&r * s_inv),
-            &BigUint::one(),
-            &(*SECP256K1GENS_ORDER).clone(),
-        );
+        let u = BigUint::modpow(&(&z * s_inv), &BigUint::one(), &SECP256K1GENS_ORDER);
+        let v = BigUint::modpow(&(&r * s_inv), &BigUint::one(), &SECP256K1GENS_ORDER);
         let point = EccPoint::new_secp256k1(px, py);
         let gen_point = EccPoint::new_secp256k1(
-            (*SECP256K1GENS_X).to_bigint().unwrap().clone(),
-            (*SECP256K1GENS_Y).to_bigint().unwrap().clone(),
+            (*SECP256K1GENS_X).to_bigint().unwrap(),
+            (*SECP256K1GENS_Y).to_bigint().unwrap(),
         );
-        if let EccPoint::Point(lhs) = (u * gen_point + v * point) {
+        if let EccPoint::Point(lhs) = u * gen_point + v * point {
             assert_eq!(lhs.x.num, r.to_bigint().unwrap());
         } else {
             panic!("POA");
@@ -526,5 +580,14 @@ mod tests {
         let sig = Signature::new(r, s);
         let point = EccPoint::new_secp256k1(px, py);
         point.verify_secp256k1(&z, &sig).unwrap();
+    }
+
+    #[test]
+    fn sec_test() {
+        let k = Key::new(5000.to_biguint().unwrap());
+        let sec = k.point.serialize_sec();
+        assert_eq!(sec.len(), 65);
+        let lhs = hex::encode(sec);
+        assert_eq!(lhs, "04ffe558e388852f0120e46af2d1b370f85854a8eb0841811ece0e3e03d282d57c315dc72890a4f10a1481c031b03b351b0dc79901ca18a00cf009dbdb157a1d10")
     }
 }

@@ -62,8 +62,8 @@ macro_rules! overloading {
         _overloading_core!($ops, &$r_type, $l_type, $res_type, $l_var, $r_var, $blck);
     };
     (($l_var:ident : $l_type:ty) $ops:tt ^($r_var:ident : $r_type:ty) => $res_type:ty as $blck:block) => {
-        _overloading_core!($ops, $r_type, $l_type, $res_type, $l_var, $r_var, $blck);
         _overloading_core!($ops, $r_type, &$l_type, $res_type, $l_var, $r_var, $blck);
+        _overloading_core!($ops, &$r_type, &$l_type, $res_type, $l_var, $r_var, $blck);
     };
     (($ops:ident) ($l_var:ident : $l_type:ty) ($fn_name:ident) ($r_var:ident : $r_type:ty) => $res_type:ty as $blck:block) => {
         _trait_block!($ops, $fn_name, $r_type, $l_type, $res_type, $l_var, $r_var, $blck);
