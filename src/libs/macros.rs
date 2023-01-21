@@ -84,3 +84,13 @@ macro_rules! _lhs_rhs_prime_eq_check {
         }
     };
 }
+
+#[macro_export]
+macro_rules! unwrap_or_none {
+    ($e:expr) => {
+        match $e {
+            Some(x) => x,
+            None => return None,
+        }
+    };
+}

@@ -1,4 +1,4 @@
-use num_bigint_dig::{BigInt, BigUint, ModInverse, RandBigInt, ToBigInt, ToBigUint};
+use num_bigint_dig::{BigUint, ModInverse, RandBigInt, ToBigUint};
 use num_traits::{One, Zero};
 
 use super::{

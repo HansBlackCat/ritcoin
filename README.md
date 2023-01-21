@@ -14,7 +14,8 @@
 - [ ] Serialization 
   - [x] Uncompressed SEC serialize
   - [x] Compressed SEC serialize
-  - [ ] DER signature
+  - [x] DER signature
+  - [ ] Base58
   - [ ] Bitcoin address & WIF
 - [ ] Transaction
 - [ ] Scripting
