@@ -1,4 +1,4 @@
-use std::vec;
+use std::{string::FromUtf8Error, vec};
 
 use num_bigint_dig::{BigInt, BigUint, Sign};
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -61,9 +61,10 @@ pub fn trim_null_start(from: Vec<u8>) -> Option<Vec<u8>> {
     Some(raw.to_vec())
 }
 
-pub fn base58_encode<T: AsRef<[u8]>>(s: T) -> Vec<u8> {
+// TODO to iterator (Algorithm)
+pub fn base58_encode(s: &[u8]) -> Result<String, FromUtf8Error> {
     let mut null_count = 0;
-    for elem in s.as_ref() {
+    for elem in s {
         if (0x00_u8).eq(elem) {
             null_count += 1;
         } else {
@@ -84,21 +85,40 @@ pub fn base58_encode<T: AsRef<[u8]>>(s: T) -> Vec<u8> {
         result.push(b'1');
     }
     result.reverse();
-    result
+    String::from_utf8(result)
 }
 
-pub fn base58_encode_with_checksum<T: AsRef<[u8]>>(s: T) -> Vec<u8> {
-    let t = Sha256::digest(s.as_ref());
-    vec![0x00_u8]
+// TODO should shasum256 twice
+// https://en.bitcoin.it/wiki/Wallet_import_format
+pub fn base58_encode_with_checksum(s: &[u8]) -> Result<String, FromUtf8Error> {
+    eprintln!("[base58_checksum] given: {:?}", hex::encode(s));
+    let _checksum: [u8; 32] = Sha256::digest(s)
+        .as_slice()
+        .try_into()
+        .expect("wrong slice length");
+    eprintln!(
+        "[base58_checksum] checksum res: {:?}",
+        hex::encode(_checksum.to_vec())
+    );
+    let checksum: &[u8; 4] = &_checksum[0..4]
+        .try_into()
+        .expect("checksum must be 4 bytes");
+    let mut result: Vec<u8> = Vec::new();
+    result.extend(s);
+    result.extend(checksum);
+    base58_encode(&result)
 }
 
 #[cfg(test)]
 mod tests {
-    use num_bigint_dig::BigUint;
-    use num_traits::{Num, ToPrimitive};
+    use crate::libs::signature::base58_encode_with_checksum;
 
     use super::base58_encode;
     use super::Signature;
+    use digest::Digest;
+    use num_bigint_dig::BigUint;
+    use num_traits::{Num, ToPrimitive};
+    use sha2::Sha256;
 
     #[test]
     fn trim_test() {
@@ -148,23 +168,38 @@ mod tests {
         let c = b"c7207fee197d27c618aea621406f6bf5ef6fca38681d82b2f06fddbdce6feab6";
         let hw = b"Hello World!";
         let a_dec = hex::decode(&a).unwrap();
-        eprintln!("{:?}", String::from_utf8(base58_encode(a_dec)));
+        eprintln!("{:?}", base58_encode(&a_dec).unwrap());
         assert_eq!(
-            String::from_utf8(base58_encode(hex::decode(&a).unwrap())).unwrap(),
+            base58_encode(&hex::decode(&a).unwrap()).unwrap(),
             "9MA8fRQrT4u8Zj8ZRd6MAiiyaxb2Y1CMpvVkHQu5hVM6"
         );
         assert_eq!(
-            String::from_utf8(base58_encode(hex::decode(&b).unwrap())).unwrap(),
+            base58_encode(&hex::decode(&b).unwrap()).unwrap(),
             "4fE3H2E6XMp4SsxtwinF7w9a34ooUrwWe4WsW1458Pd"
         );
         assert_eq!(
-            String::from_utf8(base58_encode(hex::decode(&c).unwrap())).unwrap(),
+            base58_encode(&hex::decode(&c).unwrap()).unwrap(),
             "EQJsjkd6JaGwxrjEhfeqPenqHwrBmPQZjJGNSCHBkcF7"
         );
-        eprintln!("{:?}", String::from_utf8(base58_encode(hw)));
+        eprintln!("{:?}", base58_encode(hw).unwrap());
+        assert_eq!(base58_encode(hw).unwrap(), "2NEpo7TZRRrLZSi2U");
+    }
+
+    #[test]
+    fn sha_test() {
+        let s = Sha256::digest(b"Test data").to_vec();
+        assert!(s.len() == 32);
         assert_eq!(
-            String::from_utf8(base58_encode(hw)).unwrap(),
-            "2NEpo7TZRRrLZSi2U"
+            hex::encode(&s),
+            "e27c8214be8b7cf5bccc7c08247e3cb0c1514a48ee1f63197fe4ef3ef51d7e6f"
         );
+    }
+
+    #[test]
+    fn base58_checksum_test() {
+        let a = b"Test data";
+        eprintln!("{:?}", base58_encode(a).unwrap());
+        eprintln!("{:?}", base58_encode_with_checksum(a).unwrap());
+        panic!("s");
     }
 }

@@ -15,12 +15,21 @@
   - [x] Uncompressed SEC serialize
   - [x] Compressed SEC serialize
   - [x] DER signature
-  - [ ] Base58
-  - [ ] Bitcoin address & WIF
+  - [x] Base58
+  - [ ] Bitcoin address
+  - [ ] Wallet Import Format
 - [ ] Transaction
+  - [x] version
+  - [ ] inputs
+  - [ ] script
+  - [ ] outputs
+  - [x] locktime
+  - [ ] encode
+  - [ ] decode
 - [ ] Scripting
 - [ ] Block
 - [ ] Networking
+  - [x] Bitcoin network types
 - [ ] Simple Payment Verification
 - [ ] Bloom filter
 - [ ] Segwit

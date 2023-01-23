@@ -1,3 +1,6 @@
+pub mod script;
+pub mod transaction;
+pub mod network;
 pub mod key;
 pub mod signature;
 #[macro_use]

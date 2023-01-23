@@ -1,12 +1,18 @@
 use anyhow::bail;
+use digest::Digest;
 use lazy_static::lazy_static;
 use num_bigint_dig::{BigInt, BigUint, ModInverse, ToBigInt, ToBigUint};
 use num_integer::Integer;
 use num_traits::{Num, One, Pow, Zero};
+use ripemd::Ripemd160;
+use sha2::Sha256;
 
 use crate::libs::finite_field::FiniteField;
 
-use super::signature::Signature;
+use super::{
+    network::{BitcoinNetwork, BITCOIN_MAINNET_PREFIX, BITCOIN_TESTNET_PREFIX},
+    signature::{base58_encode, base58_encode_with_checksum, Signature},
+};
 
 lazy_static! {
     pub static ref SECP256K1GENS_X: BigUint = BigUint::from_str_radix(
@@ -189,6 +195,54 @@ impl EccPoint {
             vec![0, 0]
         }
     }
+
+    pub fn hash_sec_compressed(&self) -> Vec<u8> {
+        hash160(&self.serialize_sec_compressed())
+    }
+
+    pub fn hash_sec(&self) -> Vec<u8> {
+        hash160(&self.serialize_sec())
+    }
+
+    fn gernerate_address_from_sec_raw(
+        &self,
+        compressed: bool,
+        network: BitcoinNetwork,
+    ) -> Result<String, std::string::FromUtf8Error> {
+        let sec = if compressed {
+            self.serialize_sec_compressed()
+        } else {
+            self.serialize_sec()
+        };
+        let prefix = match network {
+            BitcoinNetwork::MainNet => BITCOIN_MAINNET_PREFIX,
+            BitcoinNetwork::TestNet => BITCOIN_TESTNET_PREFIX,
+        };
+
+        let mut res = Vec::new();
+        res.push(prefix);
+        res.extend(sec);
+        base58_encode_with_checksum(&res)
+    }
+
+    pub fn gernerate_address_from_sec_compressed(
+        &self,
+        network: BitcoinNetwork,
+    ) -> Result<String, std::string::FromUtf8Error> {
+        self.gernerate_address_from_sec_raw(true, network)
+    }
+
+    pub fn gernerate_address_from_sec(
+        &self,
+        network: BitcoinNetwork,
+    ) -> Result<String, std::string::FromUtf8Error> {
+        self.gernerate_address_from_sec_raw(false, network)
+    }
+}
+
+pub fn hash160(plaintext: &[u8]) -> Vec<u8> {
+    let slice = Ripemd160::digest(Sha256::digest(plaintext));
+    Vec::from_iter(slice)
 }
 
 overloading!((lhs : EccPoint) + (rhs : EccPoint) => EccPoint as {

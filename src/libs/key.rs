@@ -1,9 +1,12 @@
 use num_bigint_dig::{BigUint, ModInverse, RandBigInt, ToBigUint};
 use num_traits::{One, Zero};
 
+use crate::libs::ecc::Ecc;
+
 use super::{
     ecc::{EccPoint, SECP256K1GENS, SECP256K1GENS_ORDER},
-    signature::Signature,
+    network::BitcoinNetwork,
+    signature::{base58_encode_with_checksum, Signature},
 };
 
 #[non_exhaustive]
@@ -46,7 +49,80 @@ impl Key {
         }
         panic!("Generator is POI");
     }
+
+    fn generate_wif_raw(
+        &self,
+        compressed: bool,
+        network: BitcoinNetwork,
+    ) -> Result<String, std::string::FromUtf8Error> {
+        let prefix = match network {
+            BitcoinNetwork::MainNet => 0x80_u8,
+            BitcoinNetwork::TestNet => 0xef_u8,
+        };
+        let mut res: Vec<u8> = Vec::new();
+        res.push(prefix);
+        eprintln!("[generate_wif_raw] prefix: {:?}", hex::encode(&res));
+        res.extend(&self.secret.to_bytes_be());
+        if compressed {
+            res.extend(b"01");
+        }
+        eprintln!("[generate_wif_raw] res: {:?}", hex::encode(&res));
+        base58_encode_with_checksum(&res)
+    }
+
+    pub fn generate_wif_compressed(
+        &self,
+        network: BitcoinNetwork,
+    ) -> Result<String, std::string::FromUtf8Error> {
+        self.generate_wif_raw(true, network)
+    }
+
+    pub fn generate_wif(
+        &self,
+        network: BitcoinNetwork,
+    ) -> Result<String, std::string::FromUtf8Error> {
+        self.generate_wif_raw(false, network)
+    }
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use num_bigint_dig::BigUint;
+    use num_traits::FromPrimitive;
+
+    use crate::libs::network::BitcoinNetwork;
+
+    use super::Key;
+
+    #[test]
+    fn secret_key_to_address() {
+        let k = Key::new(BigUint::from_u128(5002_u128).unwrap());
+        let t = k
+            .point
+            .gernerate_address_from_sec(BitcoinNetwork::TestNet)
+            .unwrap();
+        eprintln!("{:?}", t);
+        panic!("")
+    }
+
+    #[test]
+    fn wif_test() {
+        let key = Key::new(BigUint::from_i32(5003).unwrap());
+        let res = key.generate_wif_compressed(BitcoinNetwork::TestNet);
+        eprintln!("{}", res.unwrap());
+        panic!("")
+    }
+
+    #[test]
+    fn wif_test2() {
+        let key = Key::new(
+            BigUint::parse_bytes(
+                b"0C28FCA386C7A227600B2FE50B7CAE11EC86D3BF1FBE471BE89827E19D72AA1D",
+                16,
+            )
+            .unwrap(),
+        );
+        eprintln!("{}", key.generate_wif(BitcoinNetwork::MainNet).unwrap());
+        panic!("pan")
+    }
+}
